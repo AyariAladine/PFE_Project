@@ -399,7 +399,129 @@ sequenceDiagram
     Transporter-->>Email: {messageId}
     Email-->>Service: Success
 ```
+---
 
+## 🔑 11. Forgot Password Flow (Code-Based)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Client
+    participant Controller as AuthController
+    participant Service as AuthService
+    participant UserService as UsersService
+    participant DB as MongoDB
+    participant JWT as JwtService
+    participant Email as EmailService
+    participant Gmail as Gmail SMTP
+
+    User->>Client: Click "Forgot Password"
+    Client->>Client: Enter email
+    Client->>Controller: POST /auth/forgot-password<br/>{email}
+    Controller->>Service: forgotPassword(email)
+    
+    Service->>UserService: findByEmail(email)
+    UserService->>DB: findOne({email})
+    
+    alt Email Not Found
+        DB-->>UserService: null
+        UserService-->>Service: null
+        Service-->>Controller: {message: "code sent"}
+        Note over Service: Don't reveal if email exists<br/>for security
+        Controller-->>Client: 200 OK
+        Client-->>User: "Check your email"
+    end
+    
+    DB-->>UserService: user
+    UserService-->>Service: user
+    
+    Service->>Service: Generate 6-digit code<br/>Math.floor(100000 + Math.random() * 900000)
+    
+    Service->>JWT: sign({userId, code, type: 'password-reset'}, {expiresIn: '15m'})
+    JWT-->>Service: resetToken
+    
+    Service->>DB: create RefreshToken<br/>{userId, token: resetToken, expiresAt: 15min}
+    DB-->>Service: saved
+    
+    Service->>Email: sendMail(email, "Password Reset Code", html with 6-digit code)
+    Email->>Gmail: Send email with verification code
+    Gmail->>User: Email delivered with code
+    
+    Gmail-->>Email: Success
+    Email-->>Service: Success
+    Service-->>Controller: {message: "code sent"}
+    Controller-->>Client: 200 OK<br/>{message}
+    Client-->>User: "Check your email for code"
+    
+    User->>User: Check email and copy code
+```
+
+---
+
+## 🔐 12. Reset Password Flow (Code Verification)
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Client
+    participant Controller as AuthController
+    participant Service as AuthService
+    participant DB as MongoDB
+    participant JWT as JwtService
+    participant UserService as UsersService
+    participant Email as EmailService
+    participant Gmail as Gmail SMTP
+
+    User->>Client: Enter code + new password
+    Client->>Controller: POST /auth/reset-password<br/>{code: "123456", newPassword}
+    Controller->>Service: resetPassword(code, newPassword)
+    
+    Service->>DB: find active tokens<br/>{isRevoked: false, expiresAt > now}
+    DB-->>Service: activeTokens[]
+    
+    Service->>Service: Loop through tokens
+    loop For each token
+        Service->>JWT: verify(token)
+        JWT-->>Service: payload
+        Service->>Service: Check if payload.code === code<br/>and payload.type === 'password-reset'
+    end
+    
+    alt Code Not Found or Expired
+        Service-->>Controller: BadRequestException
+        Controller-->>Client: 400 Bad Request
+        Client-->>User: "Invalid or expired code"
+    end
+    
+    Service->>Service: bcrypt.hash(newPassword, 10)
+    Service-->>Service: hashedPassword
+    
+    Service->>UserService: updatePassword(userId, hashedPassword)
+    UserService->>DB: findByIdAndUpdate(userId, {password})
+    DB-->>UserService: updated user
+    UserService-->>Service: success
+    
+    Service->>DB: updateOne(tokenId, {isRevoked: true})
+    DB-->>Service: revoked
+    
+    Service->>UserService: findOne(userId)
+    UserService->>DB: findById(userId)
+    DB-->>UserService: user
+    UserService-->>Service: user
+    
+    Service->>Email: sendMail(email, "Password Reset Successful", confirmation)
+    Email->>Gmail: Send confirmation email
+    Gmail->>User: Confirmation email delivered
+    
+    Service-->>Controller: {message: "Password reset successful"}
+    Controller-->>Client: 200 OK<br/>{message}
+    Client-->>User: "Password reset! Please login"
+    
+    User->>Client: Redirect to login page
+```
+
+
+
+    
 
 
 
