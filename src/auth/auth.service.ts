@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import * as bcrypt from 'bcrypt';
@@ -129,4 +129,100 @@ export class AuthService {
 
     return user;
   }
+
+ async forgotPassword(email: string) {
+  const user = await this.usersService.findByEmail(email);
+  
+  if (!user) {
+    return { message: 'a verification code has been sent.' };
+  }
+
+  const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+
+  const resetToken = this.jwtService.sign(
+    { userId: user._id.toString(), code: resetCode, type: 'password-reset' },
+    { expiresIn: '15m' }
+  );
+  await this.refreshTokenModel.create({
+    userId: user._id,
+    token: resetToken,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000), 
+    isRevoked: false,
+  });
+
+  const emailHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #333;">Password Reset Request</h2>
+      <p>Hello ${user.name},</p>
+      <p>You requested to reset your password. Use the verification code below:</p>
+      <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0; border-radius: 5px;">
+        <h1 style="color: #007bff; letter-spacing: 5px; margin: 0; font-size: 36px;">${resetCode}</h1>
+      </div>
+      <p>This code will expire in <strong>15 minutes</strong>.</p>
+      <p>If you didn't request this, please ignore this email.</p>
+      <p style="color: #666; font-size: 12px; margin-top: 30px;">For security reasons, never share this code with anyone.</p>
+    </div>
+  `;
+
+  try {
+    await this.emailService.sendMail(user.email, 'Password Reset Code', emailHtml);
+  } catch (error) {
+    console.error('Failed to send reset email:', error);
+    throw new BadRequestException('Failed to send reset email');
+  }
+
+  return { message: 'a verification code has been sent.' };
+}
+
+async resetPassword(code: string, newPassword: string) {
+  const activeTokens = await this.refreshTokenModel.find({
+    isRevoked: false,
+    expiresAt: { $gt: new Date() },
+  }).exec();
+
+  let foundToken: { payload: any; tokenDoc: any } | null = null;
+
+  for (const token of activeTokens) {
+    try {
+      const payload = this.jwtService.verify(token.token);
+      if (payload.type === 'password-reset' && payload.code === code) {
+        foundToken = { payload, tokenDoc: token };
+        break;
+      }
+    } catch (error) {
+      continue;
+    }
+  }
+
+  if (!foundToken) {
+    throw new BadRequestException('Invalid or expired verification code');
+  }
+  const hashedPassword = await bcrypt.hash(newPassword, 10);
+  
+
+  await this.usersService.updatePassword(foundToken.payload.userId, hashedPassword);
+
+
+  await this.refreshTokenModel.findByIdAndUpdate(foundToken.tokenDoc._id, {
+    isRevoked: true,
+  });
+
+
+  const user = await this.usersService.findOne(foundToken.payload.userId);
+  const emailHtml = `
+    <h2>Password Reset Successful</h2>
+    <p>Hello ${user.name},</p>
+    <p>Your password has been successfully reset.</p>
+    <p>If you didn't make this change, please contact support immediately.</p>
+  `;
+
+  try {
+    await this.emailService.sendMail(user.email, 'Password Reset Successful', emailHtml);
+  } catch (error) {
+    console.error('Failed to send confirmation email:', error);
+  }
+
+  return { message: 'Password reset successful' };
+}
 }

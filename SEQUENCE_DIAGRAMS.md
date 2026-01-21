@@ -263,39 +263,6 @@ sequenceDiagram
     Client-->>User: "You've been logged out"
 ```
 
----
-
-## 🚪 7. Logout From All Devices Flow
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant Client
-    participant Controller as AuthController
-    participant Guard as JwtAuthGuard
-    participant Service as AuthService
-    participant DB as MongoDB
-
-    User->>Client: Click "Logout Everywhere"
-    Client->>Controller: POST /auth/logout-all<br/>Authorization: Bearer <token>
-    
-    Controller->>Guard: canActivate()
-    Guard->>Guard: Verify access token
-    Guard-->>Controller: req.user = {userId, email, role}
-    
-    Controller->>Service: logoutAll(userId)
-    Service->>DB: updateMany({userId},<br/>{isRevoked: true})
-    Note over DB: Revokes ALL refresh tokens<br/>for this user
-    DB-->>Service: updated all tokens
-    Service-->>Controller: {message: "Logged out from all devices"}
-    
-    Controller-->>Client: 200 OK<br/>{message: "Logged out from all devices successfully"}
-    Client->>Client: Delete tokens from localStorage
-    Client->>Client: Redirect to login page
-    Client-->>User: "Logged out from all devices"
-```
-
----
 
 ## ✏️ 8. Update User Flow
 

@@ -95,4 +95,17 @@ export class UsersService {
       id: deleted._id,
     };
   }
+  async updatePassword(userId: string, hashedPassword: string) {
+  const updated = await this.userModel.findByIdAndUpdate(
+    userId,
+    { password: hashedPassword },
+    { new: true }
+  ).exec();
+
+  if (!updated) {
+    throw new NotFoundException(`User with ID ${userId} not found`);
+  }
+
+  return updated;
+}
 }
