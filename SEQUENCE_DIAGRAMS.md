@@ -435,15 +435,15 @@ sequenceDiagram
     DB-->>UserService: user
     UserService-->>Service: user
     
-    Service->>Service: Generate 6-digit code<br/>Math.floor(100000 + Math.random() * 900000)
+    Service->>Service: Generate 6-digit 
     
-    Service->>JWT: sign({userId, code, type: 'password-reset'}, {expiresIn: '15m'})
+    Service->>JWT: sign({userId, code, type: 'password-reset'}),
     JWT-->>Service: resetToken
     
     Service->>DB: create RefreshToken<br/>{userId, token: resetToken, expiresAt: 15min}
     DB-->>Service: saved
     
-    Service->>Email: sendMail(email, "Password Reset Code", html with 6-digit code)
+    Service->>Email: sendMail
     Email->>Gmail: Send email with verification code
     Gmail->>User: Email delivered with code
     
@@ -492,11 +492,11 @@ sequenceDiagram
         Client-->>User: "Invalid or expired code"
     end
     
-    Service->>Service: bcrypt.hash(newPassword, 10)
+    Service->>Service: bcrypt
     Service-->>Service: hashedPassword
     
     Service->>UserService: updatePassword(userId, hashedPassword)
-    UserService->>DB: findByIdAndUpdate(userId, {password})
+    UserService->>DB: findByIdAndUpdate
     DB-->>UserService: updated user
     UserService-->>Service: success
     
