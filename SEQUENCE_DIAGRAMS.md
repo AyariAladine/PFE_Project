@@ -284,8 +284,10 @@ sequenceDiagram
     
     Controller->>Service: update(id, updateUserDto)
     
-    alt Password being updated
-        Service->>Service: crypt password
+    alt Password in request
+        Service-->>Controller: BadRequestException
+        Controller-->>Client: 400 Bad Request
+        Client-->>User: "Use password reset flow"
     end
     
     alt Email being changed

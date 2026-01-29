@@ -6,6 +6,7 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from '../config/guard/jwt-auth.guard';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { GoogleAuthDto } from './dto/google-auth.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -51,6 +52,20 @@ export class AuthController {
 @Post('reset-password')
 async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
   return this.authService.resetPassword(resetPasswordDto.code, resetPasswordDto.newPassword);
+}
+
+  /**
+   * Google Sign-In / Sign-Up endpoint
+   * - For existing users: Links Google account and logs in
+   * - For new users: Creates account with Google data (requires role)
+   */
+@Post('google')
+async googleAuth(@Body() googleAuthDto: GoogleAuthDto) {
+  return this.authService.googleAuth(
+    googleAuthDto.idToken,
+    googleAuthDto.accessToken,
+    googleAuthDto.role
+  );
 }
 
 }

@@ -1,4 +1,4 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { EmailService } from 'src/config/email.service';
@@ -6,6 +6,17 @@ import { User } from './schema/user.schema';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { InjectModel } from '@nestjs/mongoose';
+import { UserRole } from './schema/Role_enum';
+
+export interface CreateGoogleUserDto {
+  name: string;
+  lastName: string;
+  email: string;
+  googleId: string;
+  profileImageUrl?: string;
+  role: UserRole;
+  authProvider: string;
+}
 
 @Injectable()
 export class UsersService {
@@ -60,8 +71,9 @@ export class UsersService {
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
+    // Prevent password updates through this endpoint
     if (updateUserDto.password) {
-      updateUserDto.password = await bcrypt.hash(updateUserDto.password, 10);
+      throw new BadRequestException('Password cannot be update. Use the password reset.');
     }
 
     if (updateUserDto.email) {
@@ -108,4 +120,90 @@ export class UsersService {
 
   return updated;
 }
+
+  /**
+   * Update user's identity number with the scanned value from OCR
+   * @param id - User ID
+   * @param scanned - The scanned identity number from OCR
+   * @returns Updated user object without password
+   */
+  async updateWithScanned(id: string, scanned: string) {
+    const updated = await this.userModel
+      .findByIdAndUpdate(
+        id,
+        { identitynumber: scanned },
+        { new: true }
+      )
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(`User with ID ${id} not found`);
+    }
+
+    const { password, ...result } = updated.toObject();
+    return result;
+  }
+
+  /**
+   * Create a new user with Google authentication
+   */
+  async createGoogleUser(googleUserData: CreateGoogleUserDto) {
+    const exist = await this.userModel.findOne({ email: googleUserData.email }).exec();
+    if (exist) {
+      throw new ConflictException('Email already exists');
+    }
+
+    const createdUser = new this.userModel({
+      name: googleUserData.name,
+      lastName: googleUserData.lastName,
+      email: googleUserData.email,
+      googleId: googleUserData.googleId,
+      profileImageUrl: googleUserData.profileImageUrl,
+      role: googleUserData.role,
+      authProvider: googleUserData.authProvider,
+      // No password for Google-only users
+    });
+
+    const saved = await createdUser.save();
+    const { password, ...result } = saved.toObject();
+    return result;
+  }
+
+  /**
+   * Link Google account to existing user
+   */
+  async linkGoogleAccount(
+    userId: string,
+    googleId: string,
+    authProvider: string,
+    profileImageUrl?: string,
+  ) {
+    const updateData: any = { googleId, authProvider };
+    
+    // Update profile image if user doesn't have one
+    if (profileImageUrl) {
+      const user = await this.userModel.findById(userId).exec();
+      if (user && !user.profileImageUrl) {
+        updateData.profileImageUrl = profileImageUrl;
+      }
+    }
+
+    const updated = await this.userModel
+      .findByIdAndUpdate(userId, updateData, { new: true })
+      .exec();
+
+    if (!updated) {
+      throw new NotFoundException(`User with ID ${userId} not found`);
+    }
+
+    const { password, ...result } = updated.toObject();
+    return result;
+  }
+
+  /**
+   * Find user by Google ID
+   */
+  async findByGoogleId(googleId: string): Promise<User | null> {
+    return this.userModel.findOne({ googleId }).exec();
+  }
 }

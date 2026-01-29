@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { UsersService } from './users.service';
+import { OcrService } from './ocr.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { JwtAuthGuard } from '../config/guard/jwt-auth.guard';
@@ -9,7 +11,10 @@ import { UserRole } from './schema/Role_enum';
 
 @Controller('users')
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly ocrService: OcrService,
+  ) {}
 
   @Post()
   create(@Body() createUserDto: CreateUserDto) {
@@ -39,5 +44,62 @@ export class UsersController {
   @Roles(UserRole.LANDLORD)
   remove(@Param('id') id: string) {
     return this.usersService.remove(id);
+  }
+
+  /**
+   * Scan ID card and extract identity number, then update user's identity number
+   * @param id - User ID
+   * @param file - The uploaded ID card image
+   * @returns Object containing the extracted identity number and updated user
+   */
+  @Post(':id/scan-id-card')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('image'))
+  async scanIdCard(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File
+  ) {
+    if (!file) {
+      throw new BadRequestException('Please upload an image file');
+    }
+
+    // Validate file type
+    const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (!allowedMimeTypes.includes(file.mimetype)) {
+      throw new BadRequestException('Only JPEG, PNG, and WEBP images are allowed');
+    }
+
+    const scanned = await this.ocrService.extractIdentityNumber(file.buffer);
+    
+    // Update user's identity number with the scanned value
+    const updatedUser = await this.usersService.updateWithScanned(id, scanned);
+    
+    return {
+      success: true,
+      identityNumber: scanned,
+      user: updatedUser,
+      message: 'Identity number extracted and user updated successfully',
+    };
+  }
+
+  /**
+   * Extract all text from ID card (for debugging)
+   * @param file - The uploaded ID card image
+   * @returns Object containing all extracted text
+   */
+  @Post('scan-id-card/debug')
+  @UseInterceptors(FileInterceptor('image'))
+  async scanIdCardDebug(@UploadedFile() file: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Please upload an image file');
+    }
+
+    const allText = await this.ocrService.extractAllText(file.buffer);
+    
+    return {
+      success: true,
+      extractedText: allText,
+      message: 'Text extracted successfully',
+    };
   }
 }

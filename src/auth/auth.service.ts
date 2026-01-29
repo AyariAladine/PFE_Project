@@ -9,6 +9,8 @@ import { EmailService } from '../config/email.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { RefreshToken } from './schemas/refresh-token.schema';
+import { GoogleAuthService, GoogleUserPayload } from './google-auth.service';
+import { UserRole } from '../users/schema/Role_enum';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +18,7 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     private emailService: EmailService,
+    private googleAuthService: GoogleAuthService,
     @InjectModel(RefreshToken.name) private refreshTokenModel: Model<RefreshToken>,
   ) {}
 
@@ -225,4 +228,140 @@ async resetPassword(code: string, newPassword: string) {
 
   return { message: 'Password reset successful' };
 }
+
+  /**
+   * Google Sign-In/Sign-Up with automatic account linking
+   * - If user exists with same email → Link Google account
+   * - If user doesn't exist → Create new account with Google data
+   */
+async googleAuth(idToken?: string, accessToken?: string, role?: UserRole) {
+  let googleUser: GoogleUserPayload;
+
+  // Verify based on what token is provided
+  if (idToken) {
+    // Mobile: verify ID token
+    googleUser = await this.googleAuthService.verifyIdToken(idToken);
+  } else if (accessToken) {
+    // Web: verify access token
+    googleUser = await this.googleAuthService.verifyAccessToken(accessToken);
+  } else {
+    throw new BadRequestException('Either idToken or accessToken must be provided');
+  }
+
+  // Check if user already exists with this email
+  const existingUser = await this.usersService.findByEmail(googleUser.email);
+  
+  if (existingUser) {
+    // User exists - link Google account if not already linked
+    return this.linkGoogleAccount(existingUser, googleUser);
+  } else {
+    // New user - create account with Google data
+    return this.createGoogleUser(googleUser, role);
+  }
+  
+}
+  /**
+   * Link Google account to existing user
+   */
+  private async linkGoogleAccount(existingUser: any, googleUser: GoogleUserPayload) {
+    // Check if already linked with a different Google account
+    if (existingUser.googleId && existingUser.googleId !== googleUser.googleId) {
+      throw new BadRequestException('This email is already linked to a different Google account');
+    }
+
+    // Link Google account if not already linked
+    if (!existingUser.googleId) {
+      const authProvider = existingUser.password ? 'both' : 'google';
+      await this.usersService.linkGoogleAccount(
+        existingUser._id.toString(),
+        googleUser.googleId,
+        authProvider,
+        googleUser.profileImageUrl
+      );
+    }
+
+    // Generate tokens and return login response
+    const payload = {
+      userId: existingUser._id.toString(),
+      email: existingUser.email,
+      role: existingUser.role,
+    };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const refreshToken = await this.generateRefreshToken(existingUser._id.toString());
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        id: existingUser._id,
+        email: existingUser.email,
+        name: existingUser.name,
+        lastName: existingUser.lastName,
+        role: existingUser.role,
+        profileImageUrl: existingUser.profileImageUrl || googleUser.profileImageUrl,
+      },
+      isNewUser: false,
+      accountLinked: !existingUser.googleId,
+      message: existingUser.googleId 
+        ? 'Logged in with Google successfully' 
+        : 'Google account linked to your existing account',
+    };
+  }
+
+  /**
+   * Create new user with Google data
+   */
+  private async createGoogleUser(googleUser: GoogleUserPayload, role?: UserRole) {
+    if (!role) {
+      throw new BadRequestException('Role is required for new users signing up with Google');
+    }
+
+    const newUser = await this.usersService.createGoogleUser({
+      name: googleUser.name,
+      lastName: googleUser.lastName,
+      email: googleUser.email,
+      googleId: googleUser.googleId,
+      profileImageUrl: googleUser.profileImageUrl,
+      role: role,
+      authProvider: 'google',
+    });
+
+    // Send welcome email
+    try {
+      await this.emailService.sendMail(
+        newUser.email,
+        'Welcome to Our Platform',
+        `<h2>Hello ${newUser.name} ${newUser.lastName},</h2>
+        <p>Welcome! Your account has been created successfully using Google Sign-In.</p>
+        <p>Your role: <strong>${newUser.role}</strong></p>
+        <p>Best regards,<br/>The Team</p>`
+      );
+    } catch (error) {
+      console.error('Failed to send welcome email:', error);
+    }
+
+    // Generate tokens
+    const payload = {
+      userId: newUser._id.toString(),
+      email: newUser.email,
+      role: newUser.role,
+    };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const refreshToken = await this.generateRefreshToken(newUser._id.toString());
+
+    return {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      user: {
+        id: newUser._id,
+        email: newUser.email,
+        name: newUser.name,
+        lastName: newUser.lastName,
+        role: newUser.role,
+        profileImageUrl: newUser.profileImageUrl,
+      },
+      isNewUser: true,
+      message: 'Account created successfully with Google',
+    };
+  }
 }

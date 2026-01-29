@@ -10,7 +10,7 @@ export class CreateUserDto {
   @IsString()
   lastName: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
   identitynumber: string;
 
